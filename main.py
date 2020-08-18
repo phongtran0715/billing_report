@@ -14,6 +14,7 @@ from email.mime.text import MIMEText
 from email.mime.base import MIMEBase
 from email import encoders
 import re
+import numpy as np
 
 
 def send_email(receiver_email, title, body, attachment=None):
@@ -111,14 +112,15 @@ def extractInfoFromFileName():
 
 
 def get_kn_ref_no():
-    sql_query = "SELECT MAX(KNREFNO) FROM disinltltemplate WHERE BILLING_YEAR'" + file_data['billing_year'] \
-          + "' AND BILLING_MONTH = '" + file_data['billing_year'] + "' AND CHILD_CLIENT_CODE = '" + file_data['code'] \
-          + "' AND TYPE='" + file_data['billing_type'] + ";' "
+    sql_query = "SELECT MAX(KNREFNO) FROM disinftltemplate WHERE BILLING_YEAR = '" + file_data['billing_year'] \
+                + "' AND BILLING_MONTH = '" + file_data['billing_month'] + "' AND CHILD_CLIENT_CODE = '" + file_data[
+                    'code'] \
+                + "' AND TYPE='" + file_data['billing_type'] + "';"
     val = sql_conn.query(sql_query)
     try:
         result = int(val) + 1
     except:
-        result = "NA"
+        result = -1
     return result
 
 
@@ -126,40 +128,20 @@ def check_record_existed():
     sql = "SELECT COUNT(*) FROM dthrawdata WHERE CHILD_CLIENT_CODE = '" + file_data['code'] \
           + "' AND BILLING_MONTH = '" + file_data['billing_month'] + \
           "' AND BILLING_YEAR = '" + file_data['billing_year'] + "';"
-    print("sql = " + sql)
     val = sql_conn.query(sql)
     try:
-        result = int(val)
+        result = int(val.fetchone()[0])
         if result > 0:
             return True
         else:
             return False
     except:
+        print("check_record_existed is false")
         return False
 
 
-def insert_dthrawdata():
-    sql_conn.insert('dthrawdata', {'IMPID': file_import_id,
-                                   'IBY': file_data['user_name'],
-                                   'ITIME': itime,
-                                   'RSTATUS': 'PENDING',
-                                   'CHILD_CLIENT_CODE': file_data['code'],
-                                   'TYPE': file_data['billing_type'],
-                                   'DISPATCH_TYPE': file_data['billing_type'],
-                                   'BILLING_YEAR': file_data['billing_year'],
-                                   'BILLING_MONTH': file_data['billing_month'],
-                                   'KNREFNO': kn_ref_no,
-                                   'KN_JOB_REF': kn_job_ref,
-                                   'RAWDATA1': row[2],
-                                   'RAWDATA2': row[11],
-                                   'RAWDATA3': row[16],
-                                   'RAWDATA4': row[17],
-                                   'RAWDATA5': row[20],
-                                   'RAWDATA6': row[21],
-                                   'RAWDATA7': row[23],
-                                   'RAWDATA8': row[26],
-                                   'RAWDATA9': row[32],
-                                   'RAWDATA10': row[31]})
+def insert_dthrawdata(item):
+    pass
 
 
 def insert_fileimport():
@@ -223,7 +205,9 @@ if __name__ == '__main__':
                                bodyMsg, local_file)
                     print("File name : {} is not valid".format(file_name))
                     continue
-                excel_df = pd.read_excel(local_file)
+                raw_df = pd.read_excel(local_file)
+                excel_df = raw_df.replace(np.nan, '', regex=True)
+
                 # print(excel_df)
 
                 # init database
@@ -234,24 +218,63 @@ if __name__ == '__main__':
                 insert_fileimport()
                 # Insert file data to dthrawdata table
                 file_import_id = sql_conn.lastId()
-                # itime = sql_conn.getOne('fileimport', 'ITIME', 'IMPID={}'.format(file_import_id))
-                itime = "NA"
-                # kn_ref_no = get_kn_ref_no()
-                kn_ref_no = "NA"
+                sql_query = "SELECT ctime FROM fileimport WHERE fileimport_id = 27;"
+                itime = sql_conn.getOne('fileimport', "*", ('fileimport_id=%s', [file_import_id]))['ctime']
+                kn_ref_no = get_kn_ref_no()
                 kn_job_ref = "{}-{}-{}-{}-{}".format(file_data['billing_year'],
                                                      file_data['code'],
                                                      file_data['billing_type'],
                                                      file_data['billing_month'],
                                                      kn_ref_no)
                 if check_record_existed():
-                    # update
+                    # update data
                     print('Update data')
-                    pass
+                    for index, row in excel_df.iterrows():
+                        sql_conn.update('dthrawdata', {'IMPID': file_import_id,
+                                                       'IBY': file_data['user_name'],
+                                                       'ITIME': itime,
+                                                       'RSTATUS': 'PENDING',
+                                                       'TYPE': file_data['billing_type'],
+                                                       'DISPATCH_TYPE': file_data['billing_type'],
+                                                       'KNREFNO': kn_ref_no,
+                                                       'KN_JOB_REF': kn_job_ref,
+                                                       'RAWDATA1': row['SOURCE NO/MOVE ORDER NUMBER'],
+                                                       'RAWDATA2': row['TRANSACTION DATE'],
+                                                       'RAWDATA3': row['DC NUMBER'],
+                                                       'RAWDATA4': row['DC DATE'],
+                                                       'RAWDATA5': row['ITEM CODE'],
+                                                       'RAWDATA6': row['ITEM DESCRIPTION'],
+                                                       'RAWDATA7': row['TRANSACTED QUANTITY'],
+                                                       'RAWDATA8': row['TOTAL VALUE OF THE TRANSACTED QUANTITY'],
+                                                       'RAWDATA9': row['FROM SUBINVENTORY LOCATOR CODE ADDRESS'],
+                                                       'RAWDATA10': row['TO SUBINVENTORY LOCATOR CODE']},
+                                        ("BILLING_YEAR=%s AND BILLING_MONTH=%s AND CHILD_CLIENT_CODE=%s",
+                                         ([file_data['billing_year'], file_data['billing_month'], file_data['code']]))
+                                        )
                 else:
                     print('Insert data')
-                    for row in excel_df.iterrows():
-                        # insert_dthrawdata()
-                        print(row)
+                    for index, row in excel_df.iterrows():
+                        sql_conn.insert('dthrawdata', {'IMPID': file_import_id,
+                                                       'IBY': file_data['user_name'],
+                                                       'ITIME': itime,
+                                                       'RSTATUS': 'PENDING',
+                                                       'CHILD_CLIENT_CODE': file_data['code'],
+                                                       'TYPE': file_data['billing_type'],
+                                                       'DISPATCH_TYPE': file_data['billing_type'],
+                                                       'BILLING_YEAR': file_data['billing_year'],
+                                                       'BILLING_MONTH': file_data['billing_month'],
+                                                       'KNREFNO': kn_ref_no,
+                                                       'KN_JOB_REF': kn_job_ref,
+                                                       'RAWDATA1': row['SOURCE NO/MOVE ORDER NUMBER'],
+                                                       'RAWDATA2': row['TRANSACTION DATE'],
+                                                       'RAWDATA3': row['DC NUMBER'],
+                                                       'RAWDATA4': row['DC DATE'],
+                                                       'RAWDATA5': row['ITEM CODE'],
+                                                       'RAWDATA6': row['ITEM DESCRIPTION'],
+                                                       'RAWDATA7': row['TRANSACTED QUANTITY'],
+                                                       'RAWDATA8': row['TOTAL VALUE OF THE TRANSACTED QUANTITY'],
+                                                       'RAWDATA9': row['FROM SUBINVENTORY LOCATOR CODE ADDRESS'],
+                                                       'RAWDATA10': row['TO SUBINVENTORY LOCATOR CODE']})
                 # TODO : create excel report
                 # TODO : move processed file to destination folder
             ftp.quit()

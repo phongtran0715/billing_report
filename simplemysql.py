@@ -54,13 +54,13 @@ class SimpleMysql:
                 self.conn = mysql.connect(db=self.conf['db'], host=self.conf['host'],
                                           port=self.conf['port'], user=self.conf['user'],
                                           passwd=self.conf['passwd'],
-                                          charset=self.conf['charset'])
+                                          charset=self.conf['charset'], buffered=True)
             else:
                 self.conn = mysql.connect(db=self.conf['db'], host=self.conf['host'],
                                           port=self.conf['port'], user=self.conf['user'],
                                           passwd=self.conf['passwd'],
                                           ssl=self.conf['ssl'],
-                                          charset=self.conf['charset'])
+                                          charset=self.conf['charset'], buffered=True)
             self.cur = self.conn.cursor()
             self.conn.autocommit = self.conf["autocommit"]
         except:
@@ -174,7 +174,7 @@ class SimpleMysql:
         values = tuple(data.values())
 
         return self.query(
-            sql, values + where[1] if where and len(where) > 1 else values
+            sql, values + tuple(where[1]) if where and len(where) > 1 else values
         ).rowcount
 
     def insertOrUpdate(self, table, data, keys):
@@ -225,7 +225,7 @@ class SimpleMysql:
             else:
                 raise
         except:
-            print("Query failed")
+            print("Query failed : ", sql)
             raise
 
         return self.cur
