@@ -1,12 +1,13 @@
 import ftplib
 import os
-from configparser import SafeConfigParser
+from configparser import ConfigParser
 import smtplib
 import ssl
 import datetime
 
 import pandas as pd
 import simplemysql
+import report
 from os import path
 import smtplib
 from email.mime.multipart import MIMEMultipart
@@ -140,10 +141,6 @@ def check_record_existed():
         return False
 
 
-def insert_dthrawdata(item):
-    pass
-
-
 def insert_fileimport():
     sql_conn.insert('fileimport', {'file_name_orig': file_name,
                                    'file_name_db': file_name,
@@ -156,11 +153,11 @@ def insert_fileimport():
                                    'file_ac_path': os.path.join(ftp_source, file_name),
                                    'ctime': datetime.datetime.now()})
 
-
 if __name__ == '__main__':
     # read info from config file
-    parser = SafeConfigParser()
+    parser = ConfigParser()
     parser.read('app.conf')
+
     # load ftp info
     ftp_server = parser.get('ftp-info', 'server')
     ftp_user = parser.get('ftp-info', 'user')
@@ -183,6 +180,12 @@ if __name__ == '__main__':
 
     admin_email = parser.get('global', 'admin_email')
 
+    # init database
+    sql_conn = simplemysql.SimpleMysql(db=db_name, user=db_user, passwd=db_password,
+                                       host=db_server, port=db_port, autocommit=True)
+
+    report.create_report(sql_conn)
+    exit(0)
     # open ftp connection
     files = []
     with ftplib.FTP(ftp_server) as ftp:
@@ -196,7 +199,7 @@ if __name__ == '__main__':
                 print(f"{file_name}")
                 # Validate excel file name
                 # Download file from FTP to local
-                local_file = os.path.join('/tmp/', file_name)
+                local_file = os.path.join("temp", file_name)
                 ftp.retrbinary("RETR " + file_name, open(local_file, 'wb').write)
                 if not validate_excel_name(file_name):
                     # send email to user
@@ -207,12 +210,8 @@ if __name__ == '__main__':
                     continue
                 raw_df = pd.read_excel(local_file)
                 excel_df = raw_df.replace(np.nan, '', regex=True)
+                excel_df = excel_df.astype(str)
 
-                # print(excel_df)
-
-                # init database
-                sql_conn = simplemysql.SimpleMysql(db=db_name, user=db_user, passwd=db_password,
-                                                   host=db_server, port=db_port, autocommit=True)
                 file_data = extractInfoFromFileName()
                 # Insert file data to fileimport table
                 insert_fileimport()
@@ -232,7 +231,7 @@ if __name__ == '__main__':
                     for index, row in excel_df.iterrows():
                         sql_conn.update('dthrawdata', {'IMPID': file_import_id,
                                                        'IBY': file_data['user_name'],
-                                                       'ITIME': itime,
+                                                       'ITIME': '2020-08-23 17:51:15',
                                                        'RSTATUS': 'PENDING',
                                                        'TYPE': file_data['billing_type'],
                                                        'DISPATCH_TYPE': file_data['billing_type'],
@@ -246,7 +245,7 @@ if __name__ == '__main__':
                                                        'RAWDATA6': row['ITEM DESCRIPTION'],
                                                        'RAWDATA7': row['TRANSACTED QUANTITY'],
                                                        'RAWDATA8': row['TOTAL VALUE OF THE TRANSACTED QUANTITY'],
-                                                       'RAWDATA9': row['FROM SUBINVENTORY LOCATOR CODE ADDRESS'],
+                                                       'RAWDATA9': row['FROM SUBINVENTORY LOCATOR CODE'],
                                                        'RAWDATA10': row['TO SUBINVENTORY LOCATOR CODE']},
                                         ("BILLING_YEAR=%s AND BILLING_MONTH=%s AND CHILD_CLIENT_CODE=%s",
                                          ([file_data['billing_year'], file_data['billing_month'], file_data['code']]))
@@ -273,9 +272,11 @@ if __name__ == '__main__':
                                                        'RAWDATA6': row['ITEM DESCRIPTION'],
                                                        'RAWDATA7': row['TRANSACTED QUANTITY'],
                                                        'RAWDATA8': row['TOTAL VALUE OF THE TRANSACTED QUANTITY'],
-                                                       'RAWDATA9': row['FROM SUBINVENTORY LOCATOR CODE ADDRESS'],
+                                                       'RAWDATA9': row['FROM SUBINVENTORY LOCATOR CODE'],
                                                        'RAWDATA10': row['TO SUBINVENTORY LOCATOR CODE']})
-                # TODO : create excel report
+                # Create excel report
+                report_file = report.create_report(sql_conn)
+                print("Report file " + report_file)
                 # TODO : move processed file to destination folder
             ftp.quit()
         except ftplib.all_errors as e:
