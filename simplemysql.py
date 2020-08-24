@@ -218,6 +218,7 @@ class SimpleMysql:
         try:
             self.cur.execute(sql, params)
         except mysql.OperationalError as e:
+            raise Exception('Invalid json: {}'.format(e)) from None
             # mysql timed out. reconnect and retry once
             if e[0] == 2006:
                 self.connect()

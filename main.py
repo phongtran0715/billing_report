@@ -1,56 +1,117 @@
 import ftplib
 import os
 from configparser import ConfigParser
-import smtplib
-import ssl
-import datetime
-
+from datetime import datetime
 import pandas as pd
-import simplemysql
-import report
-from os import path
-import smtplib
-from email.mime.multipart import MIMEMultipart
-from email.mime.text import MIMEText
-from email.mime.base import MIMEBase
-from email import encoders
 import re
 import numpy as np
+from threading import Thread, Event
+import send_mail as send_email
+import simplemysql as simple_mysql
+import report as report
 
 
-def send_email(receiver_email, title, body, attachment=None):
-    msg = MIMEMultipart()
-    msg['From'] = sender_email
-    msg['To'] = receiver_email
-    msg['Subject'] = title
-    msg.attach(MIMEText(body, 'plain'))
+def scan():
+    # open ftp connection
+    files = []
+    with ftplib.FTP(ftp_server) as ftp:
+        try:
+            ftp.encoding = "utf-8"
+            ftp.login(ftp_user, ftp_password)
+            # change the current working directory to source
+            ftp.cwd(ftp_source)
+            if len(ftp.nlst()) <= 0:
+                print("Not found any excel file on FTP server")
+            for file_name in ftp.nlst():
+                files.append(file_name)
+                print("Found new excel file : {}".format(file_name))
 
-    if attachment is None:
-        pass
-    else:
-        if path.exists(attachment):
-            # open the file to be sent
-            file = open(attachment, "rb")
-            # instance of MIMEBase and named as p
-            p = MIMEBase('application', 'octet-stream')
-            # To change the payload into encoded form
-            p.set_payload(file.read())
-            # encode into base64
-            encoders.encode_base64(p)
-            p.add_header('Content-Disposition', "attachment; filename= %s" % attachment)
-            # attach the instance 'p' to instance 'msg'
-            msg.attach(p)
+                # Download file from FTP to local
+                print("Download file to local")
+                local_file = os.path.join(local_path, file_name)
+                ftp.retrbinary("RETR " + file_name, open(local_file, 'wb').write)
+                # validate file name
+                if not validate_excel_name(file_name):
+                    print("File name is not valid. Send email to admin.")
+                    # send email to user
+                    body_msg = "File name is invalid : {}. Please update and re-upload again!".format(file_name)
+                    send_email_obj.send_email(admin_email, "[Report] File name is invalid",
+                                              body_msg, local_file)
+                    continue
+                raw_df = pd.read_excel(local_file)
+                excel_df = raw_df.replace(np.nan, '', regex=True)
+                excel_df = excel_df.astype(str)
 
-    s = smtplib.SMTP(smtp_server, smtp_port)
-    # start TLS for security
-    s.starttls()
-    # Authentication
-    s.login(sender_email, password)
-    # Converts the Multipart msg into a string
-    text = msg.as_string()
-    # sending the mail
-    s.sendmail(sender_email, receiver_email, text)
-    s.quit()
+                file_data = extractInfoFromFileName(file_name)
+                # Insert file data to fileimport table
+                insert_fileimport(file_name, file_data)
+                # Insert file data to dthrawdata table
+                file_import_id = sql_conn.lastId()
+                sql_query = "SELECT ctime FROM fileimport WHERE fileimport_id = 27;"
+                itime = sql_conn.getOne('fileimport', "*", ('fileimport_id=%s', [file_import_id]))['ctime']
+                kn_ref_no = get_kn_ref_no(file_data)
+                kn_job_ref = "{}-{}-{}-{}-{}".format(file_data['billing_year'],
+                                                     file_data['code'],
+                                                     file_data['billing_type'],
+                                                     file_data['billing_month'],
+                                                     kn_ref_no)
+                if check_record_existed(file_data):
+                    # update data
+                    print('Update data to database')
+                    for index, row in excel_df.iterrows():
+                        sql_conn.update('dthrawdata', {'IMPID': file_import_id,
+                                                       'IBY': file_data['user_name'],
+                                                       'ITIME': '2020-08-23 17:51:15',
+                                                       'RSTATUS': 'PENDING',
+                                                       'TYPE': file_data['billing_type'],
+                                                       'DISPATCH_TYPE': file_data['billing_type'],
+                                                       'KNREFNO': kn_ref_no,
+                                                       'KN_JOB_REF': kn_job_ref,
+                                                       'RAWDATA1': row['SOURCE NO/MOVE ORDER NUMBER'],
+                                                       'RAWDATA2': row['TRANSACTION DATE'],
+                                                       'RAWDATA3': row['DC NUMBER'],
+                                                       'RAWDATA4': row['DC DATE'],
+                                                       'RAWDATA5': row['ITEM CODE'],
+                                                       'RAWDATA6': row['ITEM DESCRIPTION'],
+                                                       'RAWDATA7': row['TRANSACTED QUANTITY'],
+                                                       'RAWDATA8': row['TOTAL VALUE OF THE TRANSACTED QUANTITY'],
+                                                       'RAWDATA9': row['FROM SUBINVENTORY LOCATOR CODE'],
+                                                       'RAWDATA10': row['TO SUBINVENTORY LOCATOR CODE']},
+                                        ("BILLING_YEAR=%s AND BILLING_MONTH=%s AND CHILD_CLIENT_CODE=%s",
+                                         ([file_data['billing_year'], file_data['billing_month'],
+                                           file_data['code']]))
+                                        )
+                else:
+                    print('Insert data to database')
+                    for index, row in excel_df.iterrows():
+                        sql_conn.insert('dthrawdata', {'IMPID': file_import_id,
+                                                       'IBY': file_data['user_name'],
+                                                       'ITIME': itime,
+                                                       'RSTATUS': 'PENDING',
+                                                       'CHILD_CLIENT_CODE': file_data['code'],
+                                                       'TYPE': file_data['billing_type'],
+                                                       'DISPATCH_TYPE': file_data['billing_type'],
+                                                       'BILLING_YEAR': file_data['billing_year'],
+                                                       'BILLING_MONTH': file_data['billing_month'],
+                                                       'KNREFNO': kn_ref_no,
+                                                       'KN_JOB_REF': kn_job_ref,
+                                                       'RAWDATA1': row['SOURCE NO/MOVE ORDER NUMBER'],
+                                                       'RAWDATA2': row['TRANSACTION DATE'],
+                                                       'RAWDATA3': row['DC NUMBER'],
+                                                       'RAWDATA4': row['DC DATE'],
+                                                       'RAWDATA5': row['ITEM CODE'],
+                                                       'RAWDATA6': row['ITEM DESCRIPTION'],
+                                                       'RAWDATA7': row['TRANSACTED QUANTITY'],
+                                                       'RAWDATA8': row['TOTAL VALUE OF THE TRANSACTED QUANTITY'],
+                                                       'RAWDATA9': row['FROM SUBINVENTORY LOCATOR CODE'],
+                                                       'RAWDATA10': row['TO SUBINVENTORY LOCATOR CODE']})
+                # Delete file on FTP server
+                print('Delete file on FTP server')
+                ftp.delete(file_name)
+            ftp.quit()
+        except ftplib.all_errors as e:
+            print('Error:', e)
+    print("Done")
 
 
 def validate_excel_name(file_name):
@@ -72,33 +133,29 @@ def validate_excel_name(file_name):
                     day_string = match.group(groupNum)
                     if 0 > int(day_string) or int(day_string) > 32:
                         return False
-                        pass
 
                 # check Month is valid
                 if groupNum == 3 or groupNum == 10:
                     month_string = match.group(groupNum)
                     if 0 > int(month_string) or int(month_string) > 12:
                         return False
-                        pass
 
                 # check Year is valid
                 if groupNum == 4 or groupNum == 11:
                     year_string = match.group(groupNum)
                     if 0 > int(year_string) or int(year_string) > 9999:
                         return False
-                        pass
 
                 # check Extension is correct or not
                 if groupNum == 12:
                     extension_string = match.group(groupNum)
                     if extension_string != '.XLSX' and extension_string != '.xlsx':
                         return False
-                        pass
 
         return True
 
 
-def extractInfoFromFileName():
+def extractInfoFromFileName(file_name):
     file_prop = file_name.split('.')[0].split('-')
     data = dict()
     data["day"] = file_prop[0]
@@ -112,20 +169,20 @@ def extractInfoFromFileName():
     return data
 
 
-def get_kn_ref_no():
+def get_kn_ref_no(file_data):
     sql_query = "SELECT MAX(KNREFNO) FROM disinftltemplate WHERE BILLING_YEAR = '" + file_data['billing_year'] \
                 + "' AND BILLING_MONTH = '" + file_data['billing_month'] + "' AND CHILD_CLIENT_CODE = '" + file_data[
                     'code'] \
                 + "' AND TYPE='" + file_data['billing_type'] + "';"
     val = sql_conn.query(sql_query)
     try:
-        result = int(val) + 1
+        result = int(val.fetchone()[0])
     except:
         result = -1
     return result
 
 
-def check_record_existed():
+def check_record_existed(file_data):
     sql = "SELECT COUNT(*) FROM dthrawdata WHERE CHILD_CLIENT_CODE = '" + file_data['code'] \
           + "' AND BILLING_MONTH = '" + file_data['billing_month'] + \
           "' AND BILLING_YEAR = '" + file_data['billing_year'] + "';"
@@ -137,11 +194,10 @@ def check_record_existed():
         else:
             return False
     except:
-        print("check_record_existed is false")
         return False
 
 
-def insert_fileimport():
+def insert_fileimport(file_name, file_data):
     sql_conn.insert('fileimport', {'file_name_orig': file_name,
                                    'file_name_db': file_name,
                                    'file_location': os.path.join(ftp_source, file_name),
@@ -151,7 +207,23 @@ def insert_fileimport():
                                    'cbyname': file_data['user_name'],
                                    'cbyip': '0.0.0.0',
                                    'file_ac_path': os.path.join(ftp_source, file_name),
-                                   'ctime': datetime.datetime.now()})
+                                   'ctime': datetime.now()})
+
+
+class ScanThread(Thread):
+    def __init__(self, event, timer_interval):
+        Thread.__init__(self)
+        self.stopped = event
+        self.timer_interval = timer_interval
+
+    def run(self):
+        while not self.stopped.wait(self.timer_interval):
+            now = datetime.now()
+            current_time = now.strftime("%H:%M:%S")
+            print("------------")
+            print("Scan timer wakeup at: {}".format(current_time))
+            scan()
+
 
 if __name__ == '__main__':
     # read info from config file
@@ -179,106 +251,34 @@ if __name__ == '__main__':
     db_name = parser.get('database-info', 'db_name')
 
     admin_email = parser.get('global', 'admin_email')
+    local_path = parser.get('global', 'local_path')
+    scan_interval = parser.get('global', 'scan_interval')
+    report_interval = parser.get('global', 'report_interval')
+
+    # validate input
+    if not os.path.exists(local_path):
+        print("Local directory does not exist. Please check your configuration file!")
+        exit(1)
 
     # init database
-    sql_conn = simplemysql.SimpleMysql(db=db_name, user=db_user, passwd=db_password,
-                                       host=db_server, port=db_port, autocommit=True)
+    sql_conn = simple_mysql.SimpleMysql(db=db_name, user=db_user, passwd=db_password,
+                                        host=db_server, port=db_port, autocommit=True)
 
-    report.create_report(sql_conn)
-    exit(0)
-    # open ftp connection
-    files = []
-    with ftplib.FTP(ftp_server) as ftp:
-        try:
-            ftp.encoding = "utf-8"
-            ftp.login(ftp_user, ftp_password)
-            # change the current working directory to source
-            ftp.cwd(ftp_source)
-            for file_name in ftp.nlst():
-                files.append(file_name)
-                print(f"{file_name}")
-                # Validate excel file name
-                # Download file from FTP to local
-                local_file = os.path.join("temp", file_name)
-                ftp.retrbinary("RETR " + file_name, open(local_file, 'wb').write)
-                if not validate_excel_name(file_name):
-                    # send email to user
-                    bodyMsg = "File name is invalid : {}. Please update and re-upload again!".format(file_name)
-                    send_email(admin_email, "[Report] File name is invalid",
-                               bodyMsg, local_file)
-                    print("File name : {} is not valid".format(file_name))
-                    continue
-                raw_df = pd.read_excel(local_file)
-                excel_df = raw_df.replace(np.nan, '', regex=True)
-                excel_df = excel_df.astype(str)
+    report_sql_conn = simple_mysql.SimpleMysql(db=db_name, user=db_user, passwd=db_password,
+                                        host=db_server, port=db_port, autocommit=True)
 
-                file_data = extractInfoFromFileName()
-                # Insert file data to fileimport table
-                insert_fileimport()
-                # Insert file data to dthrawdata table
-                file_import_id = sql_conn.lastId()
-                sql_query = "SELECT ctime FROM fileimport WHERE fileimport_id = 27;"
-                itime = sql_conn.getOne('fileimport', "*", ('fileimport_id=%s', [file_import_id]))['ctime']
-                kn_ref_no = get_kn_ref_no()
-                kn_job_ref = "{}-{}-{}-{}-{}".format(file_data['billing_year'],
-                                                     file_data['code'],
-                                                     file_data['billing_type'],
-                                                     file_data['billing_month'],
-                                                     kn_ref_no)
-                if check_record_existed():
-                    # update data
-                    print('Update data')
-                    for index, row in excel_df.iterrows():
-                        sql_conn.update('dthrawdata', {'IMPID': file_import_id,
-                                                       'IBY': file_data['user_name'],
-                                                       'ITIME': '2020-08-23 17:51:15',
-                                                       'RSTATUS': 'PENDING',
-                                                       'TYPE': file_data['billing_type'],
-                                                       'DISPATCH_TYPE': file_data['billing_type'],
-                                                       'KNREFNO': kn_ref_no,
-                                                       'KN_JOB_REF': kn_job_ref,
-                                                       'RAWDATA1': row['SOURCE NO/MOVE ORDER NUMBER'],
-                                                       'RAWDATA2': row['TRANSACTION DATE'],
-                                                       'RAWDATA3': row['DC NUMBER'],
-                                                       'RAWDATA4': row['DC DATE'],
-                                                       'RAWDATA5': row['ITEM CODE'],
-                                                       'RAWDATA6': row['ITEM DESCRIPTION'],
-                                                       'RAWDATA7': row['TRANSACTED QUANTITY'],
-                                                       'RAWDATA8': row['TOTAL VALUE OF THE TRANSACTED QUANTITY'],
-                                                       'RAWDATA9': row['FROM SUBINVENTORY LOCATOR CODE'],
-                                                       'RAWDATA10': row['TO SUBINVENTORY LOCATOR CODE']},
-                                        ("BILLING_YEAR=%s AND BILLING_MONTH=%s AND CHILD_CLIENT_CODE=%s",
-                                         ([file_data['billing_year'], file_data['billing_month'], file_data['code']]))
-                                        )
-                else:
-                    print('Insert data')
-                    for index, row in excel_df.iterrows():
-                        sql_conn.insert('dthrawdata', {'IMPID': file_import_id,
-                                                       'IBY': file_data['user_name'],
-                                                       'ITIME': itime,
-                                                       'RSTATUS': 'PENDING',
-                                                       'CHILD_CLIENT_CODE': file_data['code'],
-                                                       'TYPE': file_data['billing_type'],
-                                                       'DISPATCH_TYPE': file_data['billing_type'],
-                                                       'BILLING_YEAR': file_data['billing_year'],
-                                                       'BILLING_MONTH': file_data['billing_month'],
-                                                       'KNREFNO': kn_ref_no,
-                                                       'KN_JOB_REF': kn_job_ref,
-                                                       'RAWDATA1': row['SOURCE NO/MOVE ORDER NUMBER'],
-                                                       'RAWDATA2': row['TRANSACTION DATE'],
-                                                       'RAWDATA3': row['DC NUMBER'],
-                                                       'RAWDATA4': row['DC DATE'],
-                                                       'RAWDATA5': row['ITEM CODE'],
-                                                       'RAWDATA6': row['ITEM DESCRIPTION'],
-                                                       'RAWDATA7': row['TRANSACTED QUANTITY'],
-                                                       'RAWDATA8': row['TOTAL VALUE OF THE TRANSACTED QUANTITY'],
-                                                       'RAWDATA9': row['FROM SUBINVENTORY LOCATOR CODE'],
-                                                       'RAWDATA10': row['TO SUBINVENTORY LOCATOR CODE']})
-                # Create excel report
-                report_file = report.create_report(sql_conn)
-                print("Report file " + report_file)
-                # TODO : move processed file to destination folder
-            ftp.quit()
-        except ftplib.all_errors as e:
-            print('Error:', e)
-    print("Done")
+    # init send email function
+    send_email_obj = send_email.SendEmail(smtp_server=smtp_server, smtp_port=smtp_port,
+                                          sender_email=sender_email, password=password)
+
+    # init scan file thread
+    scan_stop_flag = Event()
+    scan_thread_obj = ScanThread(scan_stop_flag, int(scan_interval))
+    scan_thread_obj.start()
+    print("Started scan file thread (interval = {} seconds)".format(scan_interval))
+
+    # init create report thread
+    report_stop_flag = Event()
+    report_thread_obj = report.ReportThread(report_stop_flag, report_sql_conn, send_email_obj, int(report_interval))
+    report_thread_obj.start()
+    print("Started report thread (interval = {} seconds)".format(report_interval))
