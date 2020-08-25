@@ -1,7 +1,10 @@
 import ftplib
 import os
+import sys
 from configparser import ConfigParser
 from datetime import datetime
+from logging import handlers
+
 import pandas as pd
 import re
 import numpy as np
@@ -9,6 +12,7 @@ from threading import Thread, Event
 import send_mail as send_email
 import simplemysql as simple_mysql
 import report as report
+import logging
 
 
 def scan():
@@ -21,18 +25,18 @@ def scan():
             # change the current working directory to source
             ftp.cwd(ftp_source)
             if len(ftp.nlst()) <= 0:
-                print("Not found any excel file on FTP server")
+                logging.info("Not found any excel file on FTP server")
             for file_name in ftp.nlst():
                 files.append(file_name)
-                print("Found new excel file : {}".format(file_name))
+                logging.info("Found new excel file : {}".format(file_name))
 
                 # Download file from FTP to local
-                print("Download file to local")
+                logging.info("Download file to local")
                 local_file = os.path.join(local_path, file_name)
                 ftp.retrbinary("RETR " + file_name, open(local_file, 'wb').write)
                 # validate file name
                 if not validate_excel_name(file_name):
-                    print("File name is not valid. Send email to admin.")
+                    logging.info("File name is not valid. Send email to admin.")
                     # send email to user
                     body_msg = "File name is invalid : {}. Please update and re-upload again!".format(file_name)
                     send_email_obj.send_email(admin_email, "[Report] File name is invalid",
@@ -47,7 +51,6 @@ def scan():
                 insert_fileimport(file_name, file_data)
                 # Insert file data to dthrawdata table
                 file_import_id = sql_conn.lastId()
-                sql_query = "SELECT ctime FROM fileimport WHERE fileimport_id = 27;"
                 itime = sql_conn.getOne('fileimport', "*", ('fileimport_id=%s', [file_import_id]))['ctime']
                 kn_ref_no = get_kn_ref_no(file_data)
                 kn_job_ref = "{}-{}-{}-{}-{}".format(file_data['billing_year'],
@@ -57,7 +60,7 @@ def scan():
                                                      kn_ref_no)
                 if check_record_existed(file_data):
                     # update data
-                    print('Update data to database')
+                    logging.info('Update data to database')
                     for index, row in excel_df.iterrows():
                         sql_conn.update('dthrawdata', {'IMPID': file_import_id,
                                                        'IBY': file_data['user_name'],
@@ -82,7 +85,7 @@ def scan():
                                            file_data['code']]))
                                         )
                 else:
-                    print('Insert data to database')
+                    logging.info('Insert data to database')
                     for index, row in excel_df.iterrows():
                         sql_conn.insert('dthrawdata', {'IMPID': file_import_id,
                                                        'IBY': file_data['user_name'],
@@ -106,12 +109,12 @@ def scan():
                                                        'RAWDATA9': row['FROM SUBINVENTORY LOCATOR CODE'],
                                                        'RAWDATA10': row['TO SUBINVENTORY LOCATOR CODE']})
                 # Delete file on FTP server
-                print('Delete file on FTP server')
+                logging.info('Delete file on FTP server')
                 ftp.delete(file_name)
             ftp.quit()
         except ftplib.all_errors as e:
-            print('Error:', e)
-    print("Done")
+            logging.error('Error:', e)
+    logging.info("Done")
 
 
 def validate_excel_name(file_name):
@@ -176,9 +179,9 @@ def get_kn_ref_no(file_data):
                 + "' AND TYPE='" + file_data['billing_type'] + "';"
     val = sql_conn.query(sql_query)
     try:
-        result = int(val.fetchone()[0])
+        result = int(val.fetchone()[0]) + 1
     except:
-        result = -1
+        result = 0
     return result
 
 
@@ -220,8 +223,8 @@ class ScanThread(Thread):
         while not self.stopped.wait(self.timer_interval):
             now = datetime.now()
             current_time = now.strftime("%H:%M:%S")
-            print("------------")
-            print("Scan timer wakeup at: {}".format(current_time))
+            logging.info("------------")
+            logging.info("Scan timer wakeup at: {}".format(current_time))
             scan()
 
 
@@ -255,9 +258,27 @@ if __name__ == '__main__':
     scan_interval = parser.get('global', 'scan_interval')
     report_interval = parser.get('global', 'report_interval')
 
+    # init logging
+    log_file = "app_log.txt"
+    if os.path.exists(log_file):
+        os.remove(log_file)
+    log = logging.getLogger('')
+    log.setLevel(logging.DEBUG)
+    log_format = logging.Formatter("%(asctime)s - %(levelname)s : %(message)s", "%Y-%m-%d %H:%M:%S")
+
+    ch = logging.StreamHandler(sys.stdout)
+    ch.setFormatter(log_format)
+    if log.hasHandlers():
+        log.handlers.clear()
+    log.addHandler(ch)
+
+    fh = handlers.RotatingFileHandler(log_file, maxBytes=(1048576 * 5), backupCount=7, mode='w')
+    fh.setFormatter(log_format)
+    log.addHandler(fh)
+
     # validate input
     if not os.path.exists(local_path):
-        print("Local directory does not exist. Please check your configuration file!")
+        logging.error('Local directory does not exist. Please check your configuration file!')
         exit(1)
 
     # init database
@@ -265,7 +286,7 @@ if __name__ == '__main__':
                                         host=db_server, port=db_port, autocommit=True)
 
     report_sql_conn = simple_mysql.SimpleMysql(db=db_name, user=db_user, passwd=db_password,
-                                        host=db_server, port=db_port, autocommit=True)
+                                               host=db_server, port=db_port, autocommit=True)
 
     # init send email function
     send_email_obj = send_email.SendEmail(smtp_server=smtp_server, smtp_port=smtp_port,
@@ -275,10 +296,10 @@ if __name__ == '__main__':
     scan_stop_flag = Event()
     scan_thread_obj = ScanThread(scan_stop_flag, int(scan_interval))
     scan_thread_obj.start()
-    print("Started scan file thread (interval = {} seconds)".format(scan_interval))
+    logging.info("Started scan file thread (interval = {} seconds)".format(scan_interval))
 
     # init create report thread
     report_stop_flag = Event()
     report_thread_obj = report.ReportThread(report_stop_flag, report_sql_conn, send_email_obj, int(report_interval))
     report_thread_obj.start()
-    print("Started report thread (interval = {} seconds)".format(report_interval))
+    logging.info("Started report thread (interval = {} seconds)".format(report_interval))

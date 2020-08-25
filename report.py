@@ -3,6 +3,7 @@ from datetime import datetime
 
 import pandas as pd
 from threading import Thread, Event
+import logging
 
 
 class ReportThread(Thread):
@@ -21,8 +22,8 @@ class ReportThread(Thread):
         while not self.stopped.wait(self.timer_interval):
             now = datetime.now()
             current_time = now.strftime("%H:%M:%S")
-            print("++++++++++++")
-            print("Report timer wakeup at: {}".format(current_time))
+            logging.info("++++++++++++")
+            logging.info("Report timer wakeup at: {}".format(current_time))
             self.create_report()
 
     def get_location_table(self, field, where, param):
@@ -52,17 +53,17 @@ class ReportThread(Thread):
         cursor = self.sql_conn.query(sql_query)
         users = cursor.fetchall()
         if len(users) <= 0:
-            print("Not found any user with pending status")
+            logging.info("Not found any user with pending status")
             return
         for user in users:
-            print("Creating report for user : " + user[0])
+            logging.info("Creating report for user : " + user[0])
             # SELECT all record from dthrawdata for each user
             sql_query = "SELECT * FROM dthrawdata WHERE IBY = '" + user[0] + "';"
             cursor = self.sql_conn.query(sql_query)
             records = cursor.fetchall()
             for i in range(len(records)):
                 row = records[i]
-                print("Record {}/{}".format(i + 1, len(records)))
+                logging.info("Record {}/{}".format(i + 1, len(records)))
                 df2 = pd.DataFrame({"KN_JOB_REF": [row[11]],
                                     "ORIGIN_LOCATION": [
                                         self.get_location_table('DESTINATION', 'ORACLE_LOCATOR_CODE', row[20])],
@@ -107,34 +108,35 @@ class ReportThread(Thread):
                 self.update_record_status(row[0])
 
             if df.empty:
-                print("Not found any pending record")
+                logging.info("Not found any pending record")
                 continue
             # Create a Pandas Excel writer using XlsxWriter as the engine.
-            writer = pd.ExcelWriter(file_path, engine='xlsxwriter')
-            df.to_excel(writer, sheet_name='Sheet1', index=False)
-            # Get the xlsxwriter workbook and worksheet objects.
-            workbook = writer.book
-            worksheet = writer.sheets['Sheet1']
-            # Add a header format.
-            header_format = workbook.add_format({
-                'bold': True,
-                'text_wrap': True,
-                'valign': 'top',
-                'fg_color': '#D7E4BC',
-                'border': 1})
-            # Write the column headers with the defined format.
-            for col_num, value in enumerate(df.columns.values):
-                worksheet.write(0, col_num + 1, value, header_format)
-
-            # Close the Pandas Excel writer and output the Excel file.
-            writer.save()
+            # writer = pd.ExcelWriter(file_path, engine='xlsxwriter')
+            # df.to_excel(writer, sheet_name='Sheet1', index=False)
+            df.to_excel(file_path, index=False)
+            # # Get the xlsxwriter workbook and worksheet objects.
+            # workbook = writer.book
+            # worksheet = writer.sheets['Sheet1']
+            # # Add a header format.
+            # header_format = workbook.add_format({
+            #     'bold': True,
+            #     'text_wrap': True,
+            #     'valign': 'top',
+            #     'fg_color': '#D7E4BC',
+            #     'border': 1})
+            # # Write the column headers with the defined format.
+            # for col_num, value in enumerate(df.columns.values):
+            #     worksheet.write(0, col_num + 1, value, header_format)
+            #
+            # # Close the Pandas Excel writer and output the Excel file.
+            # writer.save()
 
             # Send email to user
             email = self.get_user_email(user[0])
             if not email:
-                print("Can not find email of user : " + user[0])
+                logging.warning("Can not find email of user : " + user[0])
             else:
-                print("Send email to : " + email[0])
+                logging.info("Send email to : " + email[0])
                 body_msg = "This is billing report. Please check the attachment!"
                 self.email_obj.send_email(email[0], "[Report] Billing report",
                                           body_msg, file_path)
