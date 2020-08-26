@@ -52,24 +52,22 @@ def scan():
                 # Insert file data to dthrawdata table
                 file_import_id = sql_conn.lastId()
                 itime = sql_conn.getOne('fileimport', "*", ('fileimport_id=%s', [file_import_id]))['ctime']
-                kn_ref_no = get_kn_ref_no(file_data)
-                kn_job_ref = "{}-{}-{}-{}-{}".format(file_data['billing_year'],
-                                                     file_data['code'],
-                                                     file_data['billing_type'],
-                                                     file_data['billing_month'],
-                                                     kn_ref_no)
                 if check_record_existed(file_data):
                     # update data
                     logging.info('Update data to database')
                     for index, row in excel_df.iterrows():
+                        if not row['DC NUMBER']:
+                            row['DC NUMBER'] = row['SOURCE NO/MOVE ORDER NUMBER']
+                        if not row['DC DATE']:
+                            row['DC DATE'] = row['TRANSACTION DATE']
                         sql_conn.update('dthrawdata', {'IMPID': file_import_id,
                                                        'IBY': file_data['user_name'],
                                                        'ITIME': '2020-08-23 17:51:15',
                                                        'RSTATUS': 'PENDING',
                                                        'TYPE': file_data['billing_type'],
                                                        'DISPATCH_TYPE': file_data['billing_type'],
-                                                       'KNREFNO': kn_ref_no,
-                                                       'KN_JOB_REF': kn_job_ref,
+                                                       # 'KNREFNO': kn_ref_no,
+                                                       # 'KN_JOB_REF': kn_job_ref,
                                                        'RAWDATA1': row['SOURCE NO/MOVE ORDER NUMBER'],
                                                        'RAWDATA2': row['TRANSACTION DATE'],
                                                        'RAWDATA3': row['DC NUMBER'],
@@ -87,6 +85,16 @@ def scan():
                 else:
                     logging.info('Insert data to database')
                     for index, row in excel_df.iterrows():
+                        kn_ref_no = get_kn_ref_no(file_data)
+                        kn_job_ref = "{}-{}-{}-{}-{}".format(file_data['billing_year'],
+                                                             file_data['code'],
+                                                             file_data['billing_type'],
+                                                             file_data['billing_month'],
+                                                             kn_ref_no)
+                        if not row['DC NUMBER']:
+                            row['DC NUMBER'] = row['SOURCE NO/MOVE ORDER NUMBER']
+                        if not row['DC DATE']:
+                            row['DC DATE'] = row['TRANSACTION DATE']
                         sql_conn.insert('dthrawdata', {'IMPID': file_import_id,
                                                        'IBY': file_data['user_name'],
                                                        'ITIME': itime,

@@ -4,6 +4,7 @@ from datetime import datetime
 import pandas as pd
 from threading import Thread, Event
 import logging
+import os
 
 
 class ReportThread(Thread):
@@ -47,7 +48,9 @@ class ReportThread(Thread):
 
     def create_report(self):
         df = pd.DataFrame()
-        file_path = 'report.xlsx'
+        now = datetime.now()  # current date and time
+        date_time = now.strftime("[%Y_%m_%d]_[%H_%M_%S]")
+        file_path = 'report_' + date_time + '.xlsx'
         # Select all user from dthrawdata
         sql_query = "SELECT DISTINCT(IBY) FROM dthrawdata WHERE RSTATUS	= 'PENDING';"
         cursor = self.sql_conn.query(sql_query)
@@ -152,3 +155,7 @@ class ReportThread(Thread):
                 body_msg = "This is billing report. Please check the attachment!"
                 self.email_obj.send_email(email[0], "[Report] Billing report",
                                           body_msg, file_path)
+
+            # delete report file
+            os.remove(file_path)
+
