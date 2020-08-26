@@ -173,13 +173,13 @@ def extractInfoFromFileName(file_name):
 
 
 def get_kn_ref_no(file_data):
-    sql_query = "SELECT MAX(KNREFNO) FROM disinftltemplate WHERE BILLING_YEAR = '" + file_data['billing_year'] \
+    sql_query = "SELECT MAX(KNREFNO) FROM dthrawdata WHERE BILLING_YEAR = '" + file_data['billing_year'] \
                 + "' AND BILLING_MONTH = '" + file_data['billing_month'] + "' AND CHILD_CLIENT_CODE = '" + file_data[
                     'code'] \
                 + "' AND TYPE='" + file_data['billing_type'] + "';"
     val = sql_conn.query(sql_query)
     try:
-        result = int(val.fetchone()[0]) + 1
+        result = str(val.fetchone()[0] + 1)
     except:
         result = 0
     return result
