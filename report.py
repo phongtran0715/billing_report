@@ -111,25 +111,37 @@ class ReportThread(Thread):
                 logging.info("Not found any pending record")
                 continue
             # Create a Pandas Excel writer using XlsxWriter as the engine.
-            # writer = pd.ExcelWriter(file_path, engine='xlsxwriter')
-            # df.to_excel(writer, sheet_name='Sheet1', index=False)
-            df.to_excel(file_path, index=False)
-            # # Get the xlsxwriter workbook and worksheet objects.
-            # workbook = writer.book
-            # worksheet = writer.sheets['Sheet1']
-            # # Add a header format.
-            # header_format = workbook.add_format({
-            #     'bold': True,
-            #     'text_wrap': True,
-            #     'valign': 'top',
-            #     'fg_color': '#D7E4BC',
-            #     'border': 1})
-            # # Write the column headers with the defined format.
-            # for col_num, value in enumerate(df.columns.values):
-            #     worksheet.write(0, col_num + 1, value, header_format)
-            #
-            # # Close the Pandas Excel writer and output the Excel file.
-            # writer.save()
+            writer = pd.ExcelWriter(file_path, engine='xlsxwriter')
+            df.to_excel(writer, sheet_name='Sheet1', index=False)
+            # Get the xlsxwriter workbook and worksheet objects.
+            workbook = writer.book
+            worksheet = writer.sheets['Sheet1']
+            worksheet.set_column('A:AG', 30)
+            # Add a header format.
+            header_format = workbook.add_format({
+                'bold': True,
+                'text_wrap': True,
+                'valign': 'top',
+                'fg_color': '#D7E4BC',
+                'border': 1})
+            header_format.set_align('center')
+            header_format.set_align('vcenter')
+
+            cell_format = workbook.add_format()
+            cell_format.set_align('center')
+            cell_format.set_align('vcenter')
+
+            # Format another row
+            for row_num in range(len(df.index)):
+                for col_num in range(len(df.columns)):
+                    worksheet.write(row_num + 1, col_num, df.iloc[row_num][col_num], cell_format)
+
+            # Write the column headers with the defined format.
+            for col_num, value in enumerate(df.columns.values):
+                worksheet.write(0, col_num, value, header_format)
+
+            # Close the Pandas Excel writer and output the Excel file.
+            writer.save()
 
             # Send email to user
             email = self.get_user_email(user[0])
