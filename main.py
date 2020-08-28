@@ -1,6 +1,7 @@
 import ftplib
 import os
 import sys
+import threading
 from configparser import ConfigParser
 from datetime import datetime
 from logging import handlers
@@ -42,8 +43,8 @@ def scan():
                     send_email_obj.send_email(admin_email, "[Report] File name is invalid",
                                               body_msg, local_file)
                     continue
-                raw_df = pd.read_excel(local_file)
-                excel_df = raw_df.replace(np.nan, '', regex=True)
+                excel_df = pd.read_excel(local_file)
+                excel_df = excel_df.fillna('')
                 excel_df = excel_df.astype(str)
 
                 file_data = extractInfoFromFileName(file_name)
@@ -229,11 +230,33 @@ class ScanThread(Thread):
 
     def run(self):
         while not self.stopped.wait(self.timer_interval):
+            lock.acquire()
             now = datetime.now()
             current_time = now.strftime("%H:%M:%S")
             logging.info("------------")
             logging.info("Scan timer wakeup at: {}".format(current_time))
             scan()
+            lock.release()
+
+
+class ReportThread(Thread):
+
+    def __init__(self, event, timer_interval):
+        Thread.__init__(self)
+        self.sql_conn = sql_conn
+        self.email_obj = send_email_obj
+        self.timer_interval = timer_interval
+        self.stopped = event
+
+    def run(self):
+        while not self.stopped.wait(self.timer_interval):
+            lock.acquire()
+            now = datetime.now()
+            current_time = now.strftime("%H:%M:%S")
+            logging.info("++++++++++++")
+            logging.info("Report timer wakeup at: {}".format(current_time))
+            report_obj.create_report()
+            lock.release()
 
 
 if __name__ == '__main__':
@@ -300,6 +323,11 @@ if __name__ == '__main__':
     send_email_obj = send_email.SendEmail(smtp_server=smtp_server, smtp_port=smtp_port,
                                           sender_email=sender_email, password=password)
 
+    report_obj = report.Report(sql_conn, send_email_obj)
+
+    # creating a lock
+    lock = threading.Lock()
+
     # init scan file thread
     scan_stop_flag = Event()
     scan_thread_obj = ScanThread(scan_stop_flag, int(scan_interval))
@@ -308,6 +336,6 @@ if __name__ == '__main__':
 
     # init create report thread
     report_stop_flag = Event()
-    report_thread_obj = report.ReportThread(report_stop_flag, report_sql_conn, send_email_obj, int(report_interval))
+    report_thread_obj = ReportThread(report_stop_flag, int(report_interval))
     report_thread_obj.start()
     logging.info("Started report thread (interval = {} seconds)".format(report_interval))

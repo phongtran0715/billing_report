@@ -7,25 +7,13 @@ import logging
 import os
 
 
-class ReportThread(Thread):
+class Report:
     sql_conn = None
     email_obj = None
-    timer_interval = None
 
-    def __init__(self, event, sql_conn, send_email_obj, timer_interval):
-        Thread.__init__(self)
+    def __init__(self, sql_conn, send_email_obj):
         self.sql_conn = sql_conn
         self.email_obj = send_email_obj
-        self.timer_interval = timer_interval
-        self.stopped = event
-
-    def run(self):
-        while not self.stopped.wait(self.timer_interval):
-            now = datetime.now()
-            current_time = now.strftime("%H:%M:%S")
-            logging.info("++++++++++++")
-            logging.info("Report timer wakeup at: {}".format(current_time))
-            self.create_report()
 
     def get_location_table(self, field, where, param):
         sql_query = "SELECT " + field + " FROM locationmaster WHERE " + where + " = '" + param + "';"
