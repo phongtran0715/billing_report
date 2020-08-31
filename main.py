@@ -43,8 +43,8 @@ def scan():
                     send_email_obj.send_email(admin_email, "[Report] File name is invalid",
                                               body_msg, local_file)
                     continue
-                excel_df = pd.read_excel(local_file)
-                excel_df = excel_df.fillna('')
+                excel_df = pd.read_excel(local_file, dtype=str)
+                excel_df = excel_df.fillna(" ")
                 excel_df = excel_df.astype(str)
 
                 file_data = extractInfoFromFileName(file_name)
@@ -70,9 +70,9 @@ def scan():
                                                        # 'KNREFNO': kn_ref_no,
                                                        # 'KN_JOB_REF': kn_job_ref,
                                                        'RAWDATA1': row['SOURCE NO/MOVE ORDER NUMBER'],
-                                                       'RAWDATA2': row['TRANSACTION DATE'],
+                                                       'RAWDATA2': row['TRANSACTION DATE'].replace("00:00:00", "").strip(),
                                                        'RAWDATA3': row['DC NUMBER'],
-                                                       'RAWDATA4': row['DC DATE'],
+                                                       'RAWDATA4': row['DC DATE'].replace("00:00:00", "").strip(),
                                                        'RAWDATA5': row['ITEM CODE'],
                                                        'RAWDATA6': row['ITEM DESCRIPTION'],
                                                        'RAWDATA7': row['TRANSACTED QUANTITY'],
@@ -108,9 +108,9 @@ def scan():
                                                        'KNREFNO': kn_ref_no,
                                                        'KN_JOB_REF': kn_job_ref,
                                                        'RAWDATA1': row['SOURCE NO/MOVE ORDER NUMBER'],
-                                                       'RAWDATA2': row['TRANSACTION DATE'],
+                                                       'RAWDATA2': row['TRANSACTION DATE'].replace("00:00:00", "").strip(),
                                                        'RAWDATA3': row['DC NUMBER'],
-                                                       'RAWDATA4': row['DC DATE'],
+                                                       'RAWDATA4': row['DC DATE'].replace("00:00:00", "").strip(),
                                                        'RAWDATA5': row['ITEM CODE'],
                                                        'RAWDATA6': row['ITEM DESCRIPTION'],
                                                        'RAWDATA7': row['TRANSACTED QUANTITY'],
